@@ -14,14 +14,36 @@ cargo install espup espflash --locked
 espup install --targets esp32s3
 ```
 
-Then, in each new PowerShell window, put the Xtensa linker on `PATH` and build:
+Copy `v2r/.env.example` to `v2r/.env` and fill in the Wi-Fi network and your
+BTC address. They are baked into the firmware, so do not share a binary built
+with them. Then, in each new PowerShell window, put the Xtensa linker on `PATH`
+and build:
 
 ```powershell
 . ./v2r/env.ps1
-cd v2r/bench
-cargo build --release
-espflash flash --chip esp32s3 --monitor target/xtensa-esp32s3-none-elf/release/v2r-bench
+cd v2r
+cargo build --release -p nerdminer-v2r
+espflash flash --chip esp32s3 --monitor target/xtensa-esp32s3-none-elf/release/nerdminer-v2r
 ```
+
+`-p v2r-bench` builds the kernel bench instead.
+
+## `firmware`: the miner
+
+Core 0 drives the SHA accelerator in a bare loop: no scheduler, no interrupt,
+nothing else. Core 1 runs esp-rtos, with Wi-Fi, the network stack and the
+Stratum client in an embassy executor, and a software miner at a lower priority
+that takes the time they leave. The accelerator mines the lower half of the
+nonces in the first header version. The software takes the upper half in all
+four rolled versions (BIP 310). Every hit is hashed again in software before it
+is submitted, and the log counts any that do not match.
+
+Measured on 9 Nov. 2026 on pool.solomining.de, with Wi-Fi at −83 dBm:
+**353 kH/s** (321 from the accelerator, 32 in software), every share accepted,
+no bad hit. NerdMiner v1.8.3 makes about 253 kH/s on the same board.
+
+Not ported yet: the screen, the setup portal, the buttons and the statistics
+kept in flash.
 
 ## `bench`: the SHA-256 kernels
 

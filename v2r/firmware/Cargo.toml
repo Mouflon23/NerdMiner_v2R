@@ -1,0 +1,28 @@
+[package]
+name = "nerdminer-v2r"
+description = "NerdMiner v2R: a solo Bitcoin lottery miner in Rust for the ESP32-S3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+esp-hal.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-backtrace.workspace = true
+esp-println.workspace = true
+log.workspace = true
+critical-section.workspace = true
+xtensa-lx.workspace = true
+picominer-core.workspace = true
+
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "esp32s3", "log-04"] }
+esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp32s3", "log-04", "unstable", "wifi"] }
+esp-radio-rtos-driver = "0.4.2"
+embassy-executor = { version = "0.10.0", features = ["log"] }
+embassy-time = { version = "0.5.0", features = ["log"] }
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "dns", "log", "medium-ethernet", "proto-ipv4", "tcp"] }
+embassy-futures = "0.1"
+embassy-sync = "0.7"
+heapless = "0.9"
+static_cell = "2.1.1"
