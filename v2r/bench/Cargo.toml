@@ -1,0 +1,26 @@
+[package]
+name = "v2r-bench"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Measures the SHA-256 mining kernels of NerdMiner v2R on the ESP32-S3"
+
+[dependencies]
+esp-hal = { version = "~1.2.2", features = ["esp32s3", "log-04", "unstable"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3", "log-04"] }
+esp-backtrace = { version = "0.20.0", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18.0", features = ["esp32s3", "log-04"] }
+log = "0.4.27"
+critical-section = "1.2.0"
+xtensa-lx = "0.13"
+picominer-core = { git = "https://github.com/Mouflon23/PicoMiner", branch = "main" }
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = 3
+panic = "abort"
