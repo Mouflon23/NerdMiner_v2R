@@ -1,0 +1,16 @@
+[package]
+name = "v2r-bench"
+description = "Measures the SHA-256 mining kernels of NerdMiner v2R on the ESP32-S3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+esp-hal.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-backtrace.workspace = true
+esp-println.workspace = true
+log.workspace = true
+critical-section.workspace = true
+xtensa-lx.workspace = true
+picominer-core.workspace = true
