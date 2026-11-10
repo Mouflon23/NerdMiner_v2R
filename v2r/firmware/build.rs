@@ -1,18 +1,19 @@
-//! Links the firmware and bakes the settings from `v2r/.env` into it, so the
-//! credentials live in one ignored file instead of the source.
+//! Links the firmware and bakes the values of `v2r/.env` into it, as the
+//! portal form's starting values, so the credentials live in one ignored file
+//! instead of the source.
 
 use std::{env, fs};
 
-/// Each setting with its default.
+/// Each setting with its default, the C++ firmware's.
 const SETTINGS: [(&str, &str); 7] = [
     ("WIFI_SSID", ""),
     ("WIFI_PASSWORD", ""),
-    ("BTC_ADDRESS", ""),
-    ("POOL_HOST", "pool.solomining.de"),
+    ("POOL_HOST", "public-pool.io"),
     ("POOL_PORT", "3333"),
-    ("WORKER", "nerdminer-v2r"),
-    // Hours from UTC; the C++ firmware defaults to 2.
+    ("POOL_PASSWORD", "x"),
+    // Hours from UTC.
     ("TIMEZONE", "2"),
+    ("BTC_ADDRESS", "yourBtcAddress"),
 ];
 
 fn lookup<'a>(file: &'a str, key: &str) -> Option<&'a str> {
@@ -32,9 +33,13 @@ fn bake_settings() {
         let value = lookup(&file, key).unwrap_or(default);
         println!("cargo:rustc-env=V2R_{key}={value}");
     }
-    if lookup(&file, "WIFI_SSID").is_none() || lookup(&file, "BTC_ADDRESS").is_none() {
-        println!("cargo:warning=v2r/.env has no WIFI_SSID or BTC_ADDRESS: copy .env.example and fill it in");
-    }
+    // The pool takes the address as the user name, and a worker after a dot.
+    let address = lookup(&file, "BTC_ADDRESS").unwrap_or("yourBtcAddress");
+    let wallet = match lookup(&file, "WORKER") {
+        Some(worker) => format!("{address}.{worker}"),
+        None => address.to_string(),
+    };
+    println!("cargo:rustc-env=V2R_BTC_WALLET={wallet}");
     let _ = env::var("TARGET");
 }
 

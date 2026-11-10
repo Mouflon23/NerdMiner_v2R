@@ -1,13 +1,11 @@
 //! Wi-Fi association and the Stratum client, ported from PicoMiner.
 
-use core::fmt::Write;
-
 use embassy_futures::select::{Either, select};
 use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpAddress, Stack};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
-use esp_radio::wifi::WifiController;
+use esp_radio::wifi::{ConnectionError, DisconnectReason, WifiController};
 use heapless::{String, Vec};
 use log::{info, warn};
 use picominer_core::stratum::{self, Job, LineBuffer, Message, Session};
@@ -15,6 +13,7 @@ use picominer_core::target::meets_target;
 use static_cell::ConstStaticCell;
 
 use crate::config;
+use crate::settings;
 use crate::miner;
 use crate::stats::{self, Status};
 
@@ -29,6 +28,7 @@ const JOB_TIMEOUT: Duration = Duration::from_secs(600);
 const RSSI_PERIOD: Duration = Duration::from_secs(30);
 const JOIN_TIMEOUT: Duration = Duration::from_secs(30);
 const DHCP_TIMEOUT: Duration = Duration::from_secs(60);
+const FIRST_JOIN_TIMEOUT: Duration = Duration::from_secs(40);
 
 static RX: ConstStaticCell<[u8; 4096]> = ConstStaticCell::new([0; 4096]);
 static TX: ConstStaticCell<[u8; 1024]> = ConstStaticCell::new([0; 1024]);
@@ -54,12 +54,66 @@ async fn send(socket: &mut TcpSocket<'_>, request: &Request) -> Result<(), &'sta
     Ok(())
 }
 
+/// Why the boot join failed, as the portal's status line words it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum JoinFailure {
+    /// No attempt: the portal was asked for.
+    None,
+    WrongPassword,
+    NotFound,
+    Failed,
+}
+
+impl JoinFailure {
+    fn of(error: &ConnectionError) -> Self {
+        let ConnectionError::Failed(info) = error else {
+            return JoinFailure::Failed;
+        };
+        match info.reason {
+            DisconnectReason::NoAccessPointFound
+            | DisconnectReason::NoAccessPointFoundWithCompatibleSecurity
+            | DisconnectReason::NoAccessPointFoundInAuthmodeThreshold
+            | DisconnectReason::NoAccessPointFoundInRssiThreshold => JoinFailure::NotFound,
+            DisconnectReason::AuthenticationFailed
+            | DisconnectReason::FourWayHandshakeTimeout
+            | DisconnectReason::HandshakeTimeout
+            | DisconnectReason::MicFailure => JoinFailure::WrongPassword,
+            _ => JoinFailure::Failed,
+        }
+    }
+}
+
+/// `autoConnect` with `setConnectTimeout(40)`: the stored network, for 40 s.
+pub async fn first_join(controller: &mut WifiController<'static>) -> Result<(), JoinFailure> {
+    stats::update(|stats| stats.status = Status::Joining);
+    let deadline = Instant::now() + FIRST_JOIN_TIMEOUT;
+    let mut failure = JoinFailure::Failed;
+    while Instant::now() < deadline {
+        match embassy_time::with_deadline(deadline, controller.connect_async()).await {
+            Ok(Ok(_)) => {
+                info!("joined {}", settings::get().wifi_ssid);
+                return Ok(());
+            }
+            Ok(Err(error)) => {
+                warn!("Wi-Fi join failed: {:?}", error);
+                failure = JoinFailure::of(&error);
+                Timer::after_secs(2).await;
+            }
+            Err(_) => {
+                warn!("Wi-Fi join timed out");
+                let _ = with_timeout(JOIN_TIMEOUT, controller.disconnect_async()).await;
+            }
+        }
+    }
+    Err(failure)
+}
+
 async fn join(controller: &mut WifiController<'static>) {
     stats::update(|stats| stats.status = Status::Joining);
     loop {
         match with_timeout(JOIN_TIMEOUT, controller.connect_async()).await {
             Ok(Ok(_)) => {
-                info!("joined {}", config::WIFI_SSID);
+                info!("joined {}", settings::get().wifi_ssid);
                 return;
             }
             Ok(Err(error)) => {
@@ -87,8 +141,9 @@ async fn session(
     tx: &mut [u8],
     lines: &mut LineBuffer<4096>,
 ) -> Result<(), &'static str> {
-    let address = resolve(stack, config::POOL_HOST).await?;
-    let port = config::port();
+    let settings = settings::get();
+    let address = resolve(stack, &settings.pool_url).await?;
+    let port = settings.pool_port;
     info!("connecting to {}:{}", address, port);
 
     let mut socket = TcpSocket::new(stack, rx, tx);
@@ -96,13 +151,8 @@ async fn session(
     socket.set_keep_alive(Some(Duration::from_secs(30)));
     socket.connect((address, port)).await.map_err(|_| "connect failed")?;
 
-    let mut user: String<128> = String::new();
-    if config::WORKER.is_empty() {
-        write!(user, "{}", config::BTC_ADDRESS)
-    } else {
-        write!(user, "{}.{}", config::BTC_ADDRESS, config::WORKER)
-    }
-    .map_err(|_| "user too long")?;
+    // `mWorker.wName`: the address, maybe with a worker after a dot.
+    let user = &settings.btc_wallet;
 
     let mut request = Request::new();
     // Version rolling first, so that it applies from the first job.
@@ -185,7 +235,7 @@ async fn session(
                     );
                     session = Some(subscribed);
                     request.clear();
-                    stratum::write_authorize(&mut request, ID_AUTHORIZE, &user, "x").map_err(|_| "authorize")?;
+                    stratum::write_authorize(&mut request, ID_AUTHORIZE, user, &settings.pool_password).map_err(|_| "authorize")?;
                     stratum::write_suggest_difficulty(&mut request, ID_SUGGEST, config::SUGGESTED_DIFFICULTY)
                         .map_err(|_| "suggest")?;
                     send(&mut socket, &request).await?;

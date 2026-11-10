@@ -1,6 +1,7 @@
 //! Clicks, double clicks and long presses, with the OneButton timings the C++
 //! firmware uses: a click ends 400 ms after release if no second press comes,
-//! and a press longer than 800 ms is a long press.
+//! and a press longer than 800 ms is a long press, reported as soon as it is
+//! one, as `attachLongPressStart` does.
 
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Input;
@@ -21,11 +22,13 @@ pub enum Event {
 
 pub struct Button {
     input: Input<'static>,
+    /// Still down after a long press, which must not start another gesture.
+    held: bool,
 }
 
 impl Button {
     pub fn new(input: Input<'static>) -> Self {
-        Self { input }
+        Self { input, held: false }
     }
 
     fn pressed(&self) -> bool {
@@ -34,6 +37,11 @@ impl Button {
 
     /// Waits for the next gesture.
     pub async fn next(&mut self) -> Event {
+        if self.held {
+            self.input.wait_for_high().await;
+            Timer::after(DEBOUNCE).await;
+            self.held = false;
+        }
         loop {
             self.input.wait_for_low().await;
             Timer::after(DEBOUNCE).await;
@@ -46,9 +54,7 @@ impl Button {
                 let down = Instant::now();
                 while self.pressed() {
                     if clicks == 0 && down.elapsed() >= LONG_PRESS {
-                        while self.pressed() {
-                            Timer::after(POLL).await;
-                        }
+                        self.held = true;
                         return Event::LongPress;
                     }
                     Timer::after(POLL).await;

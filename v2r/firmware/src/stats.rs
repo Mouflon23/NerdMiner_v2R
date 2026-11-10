@@ -17,6 +17,8 @@ pub enum Status {
     Connecting,
     Mining,
     PoolError,
+    /// The configuration portal is open.
+    Portal,
 }
 
 impl Status {
@@ -28,6 +30,7 @@ impl Status {
             Status::Connecting => "Pool...",
             Status::Mining => "Mining",
             Status::PoolError => "Pool error",
+            Status::Portal => "Setup",
         }
     }
 }

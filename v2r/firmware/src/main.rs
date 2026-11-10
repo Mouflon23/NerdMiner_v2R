@@ -27,6 +27,8 @@ mod lcd;
 mod miner;
 mod netdata;
 mod pool;
+mod portal;
+mod settings;
 mod stats;
 mod sw;
 mod temperature;
@@ -35,6 +37,7 @@ mod text;
 use core::ffi::c_void;
 use core::ptr::addr_of_mut;
 
+use embassy_executor::Spawner;
 use esp_rtos::embassy::Executor;
 use embassy_net::{Runner, StackResources};
 use esp_backtrace as _;
@@ -60,7 +63,8 @@ const EXECUTOR_PRIORITY: usize = 2;
 const SW_MINER_PRIORITY: u32 = 1;
 const SW_MINER_STACK: usize = 8192;
 
-#[embassy_executor::task]
+/// The station's network stack, and the access point's when the portal is open.
+#[embassy_executor::task(pool_size = 2)]
 async fn net(mut runner: Runner<'static, Interface>) -> ! {
     runner.run().await
 }
@@ -69,17 +73,46 @@ extern "C" fn sw_miner(_: *mut c_void) {
     miner::mine_sw()
 }
 
-fn station_config() -> Config {
-    let authentication = if config::WIFI_PASSWORD.is_empty() {
+/// The stored network, open when it has no password.
+fn station_config(settings: &settings::Settings) -> StationConfig {
+    let authentication = if settings.wifi_password.is_empty() {
         AuthenticationMethodConfig::Open
     } else {
-        AuthenticationMethodConfig::Wpa2Personal(config::WIFI_PASSWORD.try_into().expect("Wi-Fi password too long"))
+        AuthenticationMethodConfig::Wpa2Personal(settings.wifi_password.as_str().try_into().expect("password fits"))
     };
-    Config::Station(
-        StationConfig::default()
-            .with_ssid(config::WIFI_SSID.try_into().expect("SSID too long"))
-            .with_authentication(authentication),
-    )
+    StationConfig::default()
+        .with_ssid(settings.wifi_ssid.as_str().try_into().expect("SSID fits"))
+        .with_authentication(authentication)
+}
+
+/// `init_WifiManager`: the stored network for 40 s, or else the portal. Once
+/// joined, the pool, clock and network data tasks start.
+#[embassy_executor::task]
+async fn boot(
+    spawner: Spawner,
+    mut controller: WifiController<'static>,
+    stack: embassy_net::Stack<'static>,
+    seeds: (u64, u64),
+    forced: bool,
+) {
+    let failure = if forced {
+        info!("opening the configuration portal");
+        pool::JoinFailure::None
+    } else {
+        match pool::first_join(&mut controller).await {
+            Ok(()) => {
+                spawner.spawn(pool::run(stack, controller).expect("pool task"));
+                spawner.spawn(clock::run(stack).expect("clock task"));
+                spawner.spawn(netdata::run(stack, seeds.0).expect("network data task"));
+                return;
+            }
+            Err(failure) => {
+                info!("no network ({:?}): opening the configuration portal", failure);
+                failure
+            }
+        }
+    };
+    portal::run(spawner, controller, failure, seeds.1).await
 }
 
 /// The board's peripherals that core 1 drives.
@@ -96,11 +129,17 @@ fn core1(board: Board) {
     let wifi = board.wifi;
     esp_rtos::CurrentThreadHandle::get().set_priority(EXECUTOR_PRIORITY);
 
+    let settings = settings::get();
     let mut controller = WifiController::new(wifi, Default::default()).expect("Wi-Fi starts");
-    controller.set_config(&station_config()).expect("Wi-Fi configuration");
+    // A password the driver refuses, say too short, sends the board to the portal.
+    let configured = controller.set_config(&Config::Station(station_config(&settings)));
+    if let Err(error) = &configured {
+        log::warn!("stored Wi-Fi settings refused: {:?}", error);
+    }
     let rng = Rng::new();
     let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
     let tls_seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
+    let portal_seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
     let (stack, runner) = embassy_net::new(
         Interface::station(),
         embassy_net::Config::dhcpv4(Default::default()),
@@ -119,19 +158,20 @@ fn core1(board: Board) {
         );
     }
 
+    let button = InputConfig::default().with_pull(Pull::Up);
+    let left = Input::new(board.left, button);
+    let right = Input::new(board.right, button);
+    // The second button held at boot opens the portal with the current settings.
+    let forced = !settings::stored() || settings.wifi_ssid.is_empty() || configured.is_err() || right.is_low();
+
     let executor = EXECUTOR.init(Executor::new());
-    executor.run(|spawner| {
+    executor.run(move |spawner| {
         spawner.spawn(net(runner).expect("net task"));
-        spawner.spawn(pool::run(stack, controller).expect("pool task"));
         spawner.spawn(stats::report().expect("stats task"));
-        spawner.spawn(clock::run(stack).expect("clock task"));
-        spawner.spawn(netdata::run(stack, tls_seed).expect("network data task"));
-        let button = InputConfig::default().with_pull(Pull::Up);
-        let left = buttons::Button::new(Input::new(board.left, button));
-        let right = buttons::Button::new(Input::new(board.right, button));
-        spawner.spawn(display::watch(0, left).expect("left button task"));
-        spawner.spawn(display::watch(1, right).expect("right button task"));
+        spawner.spawn(display::watch(0, buttons::Button::new(left)).expect("left button task"));
+        spawner.spawn(display::watch(1, buttons::Button::new(right)).expect("right button task"));
         spawner.spawn(display::run(lcd::Lcd::new(board.lcd)).expect("display task"));
+        spawner.spawn(boot(spawner, controller, stack, (tls_seed, portal_seed), forced).expect("boot task"));
     })
 }
 
@@ -140,7 +180,12 @@ fn main() -> ! {
     esp_println::logger::init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
-    info!("{} for {}, pool {}:{}", config::AGENT, config::BTC_ADDRESS, config::POOL_HOST, config::POOL_PORT);
+    // Wi-Fi takes most of the first region: the portal's pages and the TLS
+    // fetches need room of their own.
+    esp_alloc::heap_allocator!(size: 64 * 1024);
+    settings::init(peripherals.FLASH);
+    let settings = settings::get();
+    info!("{} for {}, pool {}:{}", config::AGENT, settings.btc_wallet, settings.pool_url, settings.pool_port);
 
     // Keeps the accelerator clocked for good.
     let sha = Sha::new(peripherals.SHA);

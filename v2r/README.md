@@ -14,10 +14,11 @@ cargo install espup espflash --locked
 espup install --targets esp32s3
 ```
 
-Copy `v2r/.env.example` to `v2r/.env` and fill in the Wi-Fi network and your
-BTC address. They are baked into the firmware, so do not share a binary built
-with them. Then, in each new PowerShell window, put the Xtensa linker on `PATH`
-and build:
+Optionally, copy `v2r/.env.example` to `v2r/.env` and fill it in: its values
+are what the setup portal's form starts with, so that saving it is one tap.
+They are baked into the firmware, so do not share a binary built with them.
+Then, in each new PowerShell window, put the Xtensa linker on `PATH` and
+build:
 
 ```powershell
 . ./v2r/env.ps1
@@ -71,8 +72,22 @@ the C++ firmware. The buttons work the same way: on the BOOT side, a click
 turns the screen off or on and a double click flips it; on the other side, a
 click shows the next screen.
 
-Not ported yet: the setup portal and its screen, the settings and statistics
-kept in flash, and every board but the T-Display S3.
+The setup portal is WiFiManager's, as the C++ firmware runs it. With no
+settings stored, with the second button held at boot, or when the stored
+network does not answer within 40 s, the board shows the setup screen and
+opens the `NerdMinerAP` access point, password `MineYourCoins`. Joining it
+opens the portal at `http://192.168.4.1` by itself: the board gives out the
+addresses and answers every DNS name with its own. The pages are
+WiFiManager v2.0.17's, copied by `v2r/tools/wm_strings.py`, with the Wi-Fi
+scan and NerdMiner's fields: pool, port, pool password, BTC address (with
+`.worker` if you like), time zone and the statistics option. Saving writes
+the settings to the first sector of the `nvs` partition and restarts. With no
+web request for 180 s, the board restarts too. A long press on the second
+button erases the settings and restarts into the portal.
+
+Not ported yet: WiFiManager's firmware update page, which needs a partition
+table with two app slots; the statistics kept in flash; and every board but
+the T-Display S3.
 
 ## `bench`: the SHA-256 kernels
 

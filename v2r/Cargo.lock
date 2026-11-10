@@ -1880,6 +1880,7 @@ dependencies = [
  "esp-radio",
  "esp-radio-rtos-driver",
  "esp-rtos",
+ "esp-storage",
  "heapless 0.9.3",
  "log",
  "picominer-core",
