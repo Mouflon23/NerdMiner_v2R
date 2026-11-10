@@ -100,7 +100,6 @@ fn report(generation: u32, work: &Work, nonce: u32, version: usize, limit: u32, 
         return;
     }
     let difficulty = hash_difficulty(&hash);
-    stats::update(|stats| stats.best = stats.best.max(difficulty));
     let found = Found { generation, nonce, version, hash, difficulty };
     FOUND.lock(|queue| {
         // A full queue means nobody is reading: the newest hit can go.

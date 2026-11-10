@@ -9,11 +9,42 @@ use log::info;
 
 use crate::miner;
 
-#[derive(Clone, Copy, Default)]
+/// What the miner is waiting for, shown on the screen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Joining,
+    Dhcp,
+    Connecting,
+    Mining,
+    PoolError,
+}
+
+impl Status {
+    #[allow(dead_code, reason = "for the setup and loading screens, not ported yet")]
+    pub fn label(self) -> &'static str {
+        match self {
+            Status::Joining => "Wi-Fi...",
+            Status::Dhcp => "DHCP...",
+            Status::Connecting => "Pool...",
+            Status::Mining => "Mining",
+            Status::PoolError => "Pool error",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Stats {
+    pub status: Status,
+    pub ip: [u8; 4],
     pub accepted: u32,
     pub rejected: u32,
+    /// Jobs received, the C++ firmware's `templates`.
+    pub templates: u32,
+    /// Accepted shares of difficulty 1 or more, its "32 bit shares".
+    pub shares32: u32,
+    /// Accepted shares that met the block target, its `valids`.
     pub blocks: u32,
+    /// Best difficulty among accepted shares.
     pub best: f64,
     pub pool_difficulty: f64,
     pub height: u32,
@@ -25,8 +56,12 @@ pub struct Stats {
 }
 
 static STATS: Mutex<CriticalSectionRawMutex, RefCell<Stats>> = Mutex::new(RefCell::new(Stats {
+    status: Status::Joining,
+    ip: [0; 4],
     accepted: 0,
     rejected: 0,
+    templates: 0,
+    shares32: 0,
     blocks: 0,
     best: 0.0,
     pool_difficulty: 0.0,

@@ -21,8 +21,13 @@ esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp32s3", "log
 esp-radio-rtos-driver = "0.4.2"
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time = { version = "0.5.0", features = ["log"] }
-embassy-net = { version = "0.9.1", features = ["dhcpv4", "dns", "log", "medium-ethernet", "proto-ipv4", "tcp"] }
+embassy-net = { version = "0.9.1", features = ["dhcpv4", "dns", "log", "medium-ethernet", "proto-ipv4", "tcp", "udp"] }
 embassy-futures = "0.1"
 embassy-sync = "0.7"
 heapless = "0.9"
+# rsa: mempool.space's certificate is RSA, and it refuses a client that offers
+# only ECDSA signatures.
+reqwless = { version = "0.14", features = ["log", "rsa"] }
+# embedded-tls 0.18 uses der's SequenceOf without asking for its heapless feature.
+der = { version = "0.8", default-features = false, features = ["heapless"] }
 static_cell = "2.1.1"

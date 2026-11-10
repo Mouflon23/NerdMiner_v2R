@@ -1,0 +1,2 @@
+# Raw RGB565 pixels: never touch line endings.
+*.rgb565 binary
