@@ -23,10 +23,25 @@ const PAD_FIRST: u32 = 0x0000_0080;
 const LEN_640: u32 = 0x8002_0000;
 const LEN_256: u32 = 0x0001_0000;
 
-/// Cycles the first block takes at 240 MHz, less a margin: the loop spins this
-/// long before its single look at the busy flag, a slow read it would
-/// otherwise repeat. `bench` found 156 to be the shortest delay that hashes right.
-const FIRST_BLOCK_CYCLES: u32 = 140;
+/// How the loop waits for each block. Reading the busy flag costs a slow
+/// peripheral read, about 20 cycles, so spinning on the cycle counter for as
+/// long as the block takes is faster. `bench` found 156 cycles to be the
+/// shortest first-block wait that hashes right at 240 MHz.
+#[derive(Clone, Copy, Debug)]
+pub struct Timing {
+    /// Cycles from the start of the first block before its digest is read.
+    pub first: u32,
+    /// Also wait for the busy flag after that.
+    pub poll_first: bool,
+    /// Wait for the busy flag after filling the next first block, which
+    /// takes longer than the second block does.
+    pub poll_second: bool,
+}
+
+pub const TIMING: Timing = Timing { first: 150, poll_first: true, poll_second: false };
+
+/// Waits for the busy flag after both blocks.
+pub const SAFE_TIMING: Timing = Timing { first: 140, poll_first: true, poll_second: true };
 
 /// What the accelerator needs of one header version, in register order.
 #[derive(Clone, Copy)]
@@ -89,7 +104,7 @@ fn fill_first(work: &HwWork, nonce: u32) {
 /// top little-endian word at most `limit`, like `Work::scan` for one version.
 /// The caller owns the accelerator: nothing else may touch it meanwhile.
 #[esp_hal::ram]
-pub fn scan(work: &HwWork, start: u32, count: u32, limit: u32) -> Option<u32> {
+pub fn scan(work: &HwWork, start: u32, count: u32, limit: u32, timing: Timing) -> Option<u32> {
     unsafe { write_volatile(SHA_MODE, MODE_SHA256) };
     for i in 9..15 {
         w(SHA_M, i, 0);
@@ -104,8 +119,10 @@ pub fn scan(work: &HwWork, start: u32, count: u32, limit: u32) -> Option<u32> {
         unsafe { write_volatile(SHA_CONTINUE, 1) };
         w(SHA_M, 8, PAD_FIRST);
         w(SHA_M, 15, LEN_256);
-        while cycles().wrapping_sub(started) < FIRST_BLOCK_CYCLES {}
-        wait_idle();
+        while cycles().wrapping_sub(started) < timing.first {}
+        if timing.poll_first {
+            wait_idle();
+        }
 
         let h = [r(SHA_H, 0), r(SHA_H, 1), r(SHA_H, 2), r(SHA_H, 3), r(SHA_H, 4), r(SHA_H, 5), r(SHA_H, 6), r(SHA_H, 7)];
         for (i, word) in h.into_iter().enumerate() {
@@ -113,13 +130,25 @@ pub fn scan(work: &HwWork, start: u32, count: u32, limit: u32) -> Option<u32> {
         }
         unsafe { write_volatile(SHA_START, 1) };
         let next = nonce.wrapping_add(1);
-        // Longer than the block takes, so the busy flag is read once.
         fill_first(work, next);
-        wait_idle();
+        if timing.poll_second {
+            wait_idle();
+        }
         if r(SHA_H, 7) <= limit {
             return Some(nonce);
         }
         nonce = next;
     }
     None
+}
+
+/// The digest of one nonce through [`scan`], in digest byte order, to check
+/// the accelerator against the software.
+pub fn digest(work: &HwWork, nonce: u32, timing: Timing) -> [u8; 32] {
+    scan(work, nonce, 1, u32::MAX, timing);
+    let mut out = [0u8; 32];
+    for (i, bytes) in out.chunks_exact_mut(4).enumerate() {
+        bytes.copy_from_slice(&r(SHA_H, i).to_le_bytes());
+    }
+    out
 }

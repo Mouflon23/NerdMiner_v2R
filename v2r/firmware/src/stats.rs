@@ -53,6 +53,10 @@ pub struct Stats {
     /// Hits the software hash did not confirm, per miner.
     pub bad_hw_hits: u32,
     pub bad_sw_hits: u32,
+    /// Chunks whose sample nonce the accelerator got wrong.
+    pub bad_hw_checks: u32,
+    /// Whether the Xtensa software loop matched PicoMiner's, once checked.
+    pub sw_checked: Option<bool>,
 }
 
 static STATS: Mutex<CriticalSectionRawMutex, RefCell<Stats>> = Mutex::new(RefCell::new(Stats {
@@ -70,6 +74,8 @@ static STATS: Mutex<CriticalSectionRawMutex, RefCell<Stats>> = Mutex::new(RefCel
     drops: 0,
     bad_hw_hits: 0,
     bad_sw_hits: 0,
+    bad_hw_checks: 0,
+    sw_checked: None,
 }));
 
 pub fn update(change: impl FnOnce(&mut Stats)) {
@@ -96,7 +102,7 @@ pub async fn report() -> ! {
         let (hw, sw) = (rate(0), rate(1));
         let stats = get();
         info!(
-            "{:.1} kH/s (hw {:.1} + sw {:.1}), shares {}/{}, best {:.4}, pool diff {}, block {}, rssi {}, drops {}, bad hits {}/{}",
+            "{:.1} kH/s (hw {:.1} + sw {:.1}), shares {}/{}, best {:.4}, pool diff {}, block {}, rssi {}, drops {}, bad hits {}/{}, bad checks {}, xtensa sw {:?}",
             hw + sw,
             hw,
             sw,
@@ -109,7 +115,11 @@ pub async fn report() -> ! {
             stats.drops,
             stats.bad_hw_hits,
             stats.bad_sw_hits,
+            stats.bad_hw_checks,
+            stats.sw_checked,
         );
+        #[cfg(feature = "tune")]
+        info!("timing {:?}", miner::trial_name());
         last = hashes;
         since = now;
     }

@@ -38,9 +38,27 @@ nonces in the first header version. The software takes the upper half in all
 four rolled versions (BIP 310). Every hit is hashed again in software before it
 is submitted, and the log counts any that do not match.
 
-Measured on 9 Nov. 2026 on pool.solomining.de, with Wi-Fi at −83 dBm:
-**353 kH/s** (321 from the accelerator, 32 in software), every share accepted,
-no bad hit. NerdMiner v1.8.3 makes about 253 kH/s on the same board.
+Measured on 10 Nov. 2026 on pool.solomining.de, screen on: **367.5 kH/s**
+(331 from the accelerator, 36.4 in software), every share accepted. NerdMiner
+v1.8.3 makes about 253 kH/s on the same board.
+
+How it gets there:
+
+- The accelerator loop writes the next message words while a block is being
+  hashed, and never rewrites the words that stay zero (see `bench` below).
+- It waits 150 cycles after starting the first block, then reads the busy
+  flag once; after the second block it does not wait at all, since filling the
+  next first block takes longer. Timings were swept on the board with the
+  `tune` feature (`cargo build --release -p nerdminer-v2r --features tune`).
+  Skipping the first busy read is faster, but then the block's length depends
+  on what core 1 does on the bus, and hashes come out wrong.
+- After each chunk of 4096 nonces, one nonce is hashed again in software. A
+  mismatch counts as a bad check in the log, and switches the loop for good to
+  waiting on the busy flag after both blocks.
+- The software loop (`sw.rs`) is PicoMiner's, with each 32-bit rotation done
+  by the LX7's funnel shift, `ssai` and `src`, in two instructions instead of
+  three. It is checked against PicoMiner's at the first job, and falls back
+  to it on a mismatch.
 
 The T-Display S3 screens match the C++ firmware's: the loading screen, then
 the miner, clock, global hashrate and BTC price screens, with the same
