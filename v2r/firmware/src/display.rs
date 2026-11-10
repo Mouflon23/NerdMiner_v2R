@@ -346,13 +346,13 @@ impl Monitor {
     /// `tDisplay_MinerScreen`.
     fn miner(&self, items: &mut Items, rate: String<16>) {
         let stats = stats::get();
-        let uptime = self.started.elapsed().as_secs();
+        let uptime = stats.uptime_before + self.started.elapsed().as_secs();
         let (days, hours, minutes, seconds) = (uptime / 86_400, uptime / 3600 % 24, uptime / 60 % 60, uptime % 60);
         let mut mining_time: String<16> = String::new();
         let _ = write!(mining_time, "{days}  {hours:02}:{minutes:02}:{seconds:02}");
 
         items.smooth(&fonts::DIGITAL_NUMBERS_35, Align::Right, 118, 114, TFT_BLACK, rate);
-        items.smooth(&fonts::DIGITAL_NUMBERS_18, Align::Right, 268, 138, TFT_BLACK, self.total_hashes / 1_000_000);
+        items.smooth(&fonts::DIGITAL_NUMBERS_18, Align::Right, 268, 138, TFT_BLACK, (stats.hashes_before + self.total_hashes) / 1_000_000);
         items.smooth(&fonts::DIGITAL_NUMBERS_18, Align::Left, 186, 20, LIGHT, stats.templates);
         items.smooth(&fonts::DIGITAL_NUMBERS_18, Align::Left, 186, 48, LIGHT, suffix_string(stats.best));
         items.smooth(&fonts::DIGITAL_NUMBERS_18, Align::Left, 186, 76, LIGHT, stats.shares32);

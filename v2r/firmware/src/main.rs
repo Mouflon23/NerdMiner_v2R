@@ -168,6 +168,7 @@ fn core1(board: Board) {
     executor.run(move |spawner| {
         spawner.spawn(net(runner).expect("net task"));
         spawner.spawn(stats::report().expect("stats task"));
+        spawner.spawn(stats::persist().expect("statistics saving task"));
         spawner.spawn(display::watch(0, buttons::Button::new(left)).expect("left button task"));
         spawner.spawn(display::watch(1, buttons::Button::new(right)).expect("right button task"));
         spawner.spawn(display::run(lcd::Lcd::new(board.lcd)).expect("display task"));
@@ -184,6 +185,7 @@ fn main() -> ! {
     // fetches need room of their own.
     esp_alloc::heap_allocator!(size: 64 * 1024);
     settings::init(peripherals.FLASH);
+    stats::restore();
     let settings = settings::get();
     info!("{} for {}, pool {}:{}", config::AGENT, settings.btc_wallet, settings.pool_url, settings.pool_port);
 

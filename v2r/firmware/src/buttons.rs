@@ -22,13 +22,16 @@ pub enum Event {
 
 pub struct Button {
     input: Input<'static>,
-    /// Still down after a long press, which must not start another gesture.
+    /// Still down after a long press, or since boot, which must not start
+    /// another gesture.
     held: bool,
 }
 
 impl Button {
     pub fn new(input: Input<'static>) -> Self {
-        Self { input, held: false }
+        // Held at boot, it chose the portal: that press is not a gesture.
+        let held = input.is_low();
+        Self { input, held }
     }
 
     fn pressed(&self) -> bool {

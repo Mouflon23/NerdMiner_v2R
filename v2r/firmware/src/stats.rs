@@ -60,6 +60,12 @@ pub struct Stats {
     pub bad_hw_checks: u32,
     /// Whether the Xtensa software loop matched PicoMiner's, once checked.
     pub sw_checked: Option<bool>,
+    /// Hashes since boot, as the log counts them every 15 s.
+    pub total_hashes: u64,
+    /// Hashes and seconds of uptime saved before this boot, `Mhashes` and
+    /// `upTime` restored.
+    pub hashes_before: u64,
+    pub uptime_before: u64,
 }
 
 static STATS: Mutex<CriticalSectionRawMutex, RefCell<Stats>> = Mutex::new(RefCell::new(Stats {
@@ -79,6 +85,9 @@ static STATS: Mutex<CriticalSectionRawMutex, RefCell<Stats>> = Mutex::new(RefCel
     bad_sw_hits: 0,
     bad_hw_checks: 0,
     sw_checked: None,
+    total_hashes: 0,
+    hashes_before: 0,
+    uptime_before: 0,
 }));
 
 pub fn update(change: impl FnOnce(&mut Stats)) {
@@ -103,6 +112,8 @@ pub async fn report() -> ! {
         let seconds = (now - since).as_micros() as f32 / 1e6;
         let rate = |i: usize| hashes[i].wrapping_sub(last[i]) as f32 / seconds / 1000.0;
         let (hw, sw) = (rate(0), rate(1));
+        let done = u64::from(hashes[0].wrapping_sub(last[0])) + u64::from(hashes[1].wrapping_sub(last[1]));
+        update(|stats| stats.total_hashes += done);
         let stats = get();
         info!(
             "{:.1} kH/s (hw {:.1} + sw {:.1}), shares {}/{}, best {:.4}, pool diff {}, block {}, rssi {}, drops {}, bad hits {}/{}, bad checks {}, xtensa sw {:?}",
@@ -125,5 +136,78 @@ pub async fn report() -> ! {
         info!("timing {:?}", miner::trial_name());
         last = hashes;
         since = now;
+    }
+}
+
+/// `saveIntervals`: the first save after 5 min, then further and further
+/// apart, up to every 12 h.
+const SAVE_INTERVALS: [u64; 7] = [5 * 60, 15 * 60, 30 * 60, 3600, 3 * 3600, 6 * 3600, 12 * 3600];
+
+/// The figures `saveStat` keeps, one `key=value` line each.
+fn encode() -> heapless::String<256> {
+    let stats = get();
+    let mut out = heapless::String::new();
+    let _ = core::fmt::write(
+        &mut out,
+        format_args!(
+            "best_diff={}
+hashes={}
+shares={}
+valids={}
+templates={}
+upTime={}
+",
+            stats.best,
+            stats.hashes_before + stats.total_hashes,
+            stats.shares32,
+            stats.blocks,
+            stats.templates,
+            stats.uptime_before + Instant::now().as_secs(),
+        ),
+    );
+    out
+}
+
+/// `restoreStat`, before the miners start, when the settings ask for it.
+pub fn restore() {
+    let Some(text) = crate::settings::take_stats() else {
+        return;
+    };
+    if !crate::settings::get().save_stats {
+        return;
+    }
+    update(|stats| {
+        for (key, value) in text.lines().filter_map(|line| line.split_once('=')) {
+            match key {
+                "best_diff" => stats.best = value.parse().unwrap_or(0.0),
+                "hashes" => stats.hashes_before = value.parse().unwrap_or(0),
+                "shares" => stats.shares32 = value.parse().unwrap_or(0),
+                "valids" => stats.blocks = value.parse().unwrap_or(0),
+                "templates" => stats.templates = value.parse().unwrap_or(0),
+                "upTime" => stats.uptime_before = value.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+        info!(
+            "statistics restored: {} templates, {} shares, best {:.4}, {} s up",
+            stats.templates, stats.shares32, stats.best, stats.uptime_before
+        );
+    });
+}
+
+/// `saveStat` on the C++ schedule, when the settings ask for it.
+#[embassy_executor::task]
+pub async fn persist() {
+    if !crate::settings::get().save_stats {
+        return;
+    }
+    let mut next = Instant::now();
+    let mut intervals = SAVE_INTERVALS.iter().copied().chain(core::iter::repeat(12 * 3600));
+    loop {
+        next += Duration::from_secs(intervals.next().unwrap_or(12 * 3600));
+        embassy_time::Timer::at(next).await;
+        if crate::settings::save_stats(&encode()) {
+            info!("statistics saved");
+        }
     }
 }
