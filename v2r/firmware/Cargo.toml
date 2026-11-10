@@ -31,3 +31,7 @@ reqwless = { version = "0.14", features = ["log", "rsa"] }
 # embedded-tls 0.18 uses der's SequenceOf without asking for its heapless feature.
 der = { version = "0.8", default-features = false, features = ["heapless"] }
 static_cell = "2.1.1"
+
+[features]
+# Tries several accelerator timings in turn, 45 s each, and logs them.
+tune = []

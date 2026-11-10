@@ -7,6 +7,8 @@
 
 #![no_std]
 #![no_main]
+// Inline assembly on Xtensa, for the funnel shift in `sw`.
+#![feature(asm_experimental_arch)]
 
 extern crate alloc;
 
@@ -26,6 +28,7 @@ mod miner;
 mod netdata;
 mod pool;
 mod stats;
+mod sw;
 mod temperature;
 mod text;
 
