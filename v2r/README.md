@@ -83,11 +83,17 @@ scan and NerdMiner's fields: pool, port, pool password, BTC address (with
 `.worker` if you like), time zone and the statistics option. Saving writes
 the settings to the first sector of the `nvs` partition and restarts. With no
 web request for 180 s, the board restarts too. A long press on the second
-button erases the settings and restarts into the portal.
+button erases the settings and the statistics, and restarts into the portal.
+
+With "Save mining statistics to flash memory" ticked, the board keeps what
+the C++ firmware keeps: the best difficulty, the hashes, the 32-bit shares,
+the blocks, the templates and the uptime. It saves them in the second sector
+of the `nvs` partition on the same schedule, 5 min after boot, then after 15
+and 30 min, 1, 3 and 6 h, and every 12 h from then on, and the miner screen
+starts from them after a restart.
 
 Not ported yet: WiFiManager's firmware update page, which needs a partition
-table with two app slots; the statistics kept in flash; and every board but
-the T-Display S3.
+table with two app slots, and every board but the T-Display S3.
 
 ## `bench`: the SHA-256 kernels
 

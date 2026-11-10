@@ -27,6 +27,10 @@ const MAGIC: u32 = u32::from_le_bytes(*b"V2RS");
 const HEADER: usize = 12;
 const SECTOR: u32 = FlashStorage::SECTOR_SIZE;
 const RECORD_MAX: usize = 1024;
+/// The settings, then the statistics.
+const SETTINGS_SECTOR: u32 = 0;
+const STATS_SECTOR: u32 = 1;
+const SECTORS: u32 = 2;
 
 /// Where `readCustomAPName` looks for an access point name a web flasher left.
 const WEBFLASHER_CONFIG: u32 = 0x3F_0000;
@@ -136,6 +140,8 @@ struct State {
     settings: Settings,
     stored: bool,
     ap_name: String<32>,
+    /// The statistics record read at boot, for [`take_stats`].
+    stats: Option<String<RECORD_MAX>>,
 }
 
 static STATE: Mutex<CriticalSectionRawMutex, RefCell<Option<State>>> = Mutex::new(RefCell::new(None));
@@ -144,10 +150,12 @@ fn nvs_offset(flash: &mut FlashStorage<'static>) -> Option<u32> {
     let mut buffer = [0u8; partitions::PARTITION_TABLE_MAX_LEN];
     let table = partitions::read_partition_table(flash, &mut buffer).ok()?;
     let entry = table.find_partition(PartitionType::Data(DataPartitionSubType::Nvs)).ok()??;
-    (entry.len() >= SECTOR).then(|| entry.offset())
+    (entry.len() >= SECTORS * SECTOR).then(|| entry.offset())
 }
 
-fn read_record(flash: &mut FlashStorage<'static>, offset: u32) -> Option<Settings> {
+/// The text of the record in sector `index` of the partition, if valid.
+fn read_record(flash: &mut FlashStorage<'static>, offset: u32, index: u32) -> Option<String<RECORD_MAX>> {
+    let offset = offset + index * SECTOR;
     let mut header = [0u8; HEADER];
     flash.read(offset, &mut header).ok()?;
     let word = |at: usize| u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]]);
@@ -158,10 +166,25 @@ fn read_record(flash: &mut FlashStorage<'static>, offset: u32) -> Option<Setting
     let mut body = [0u8; RECORD_MAX];
     flash.read(offset + HEADER as u32, &mut body[..length]).ok()?;
     if checksum(&body[..length]) != word(8) {
-        warn!("settings: bad checksum");
+        warn!("flash record {}: bad checksum", index);
         return None;
     }
-    Some(Settings::decode(core::str::from_utf8(&body[..length]).ok()?))
+    Some(bounded(core::str::from_utf8(&body[..length]).ok()?))
+}
+
+/// Rewrites sector `index` with `text`. Core 0 is parked meanwhile.
+fn write_record(store: &mut Store, index: u32, text: &str) -> Result<(), esp_storage::FlashStorageError> {
+    let mut record = [0xffu8; HEADER + RECORD_MAX];
+    let text = &text.as_bytes()[..text.len().min(RECORD_MAX)];
+    record[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+    record[4..8].copy_from_slice(&(text.len() as u32).to_le_bytes());
+    record[8..12].copy_from_slice(&checksum(text).to_le_bytes());
+    record[HEADER..HEADER + text.len()].copy_from_slice(text);
+    // Whole words, as the flash writes them.
+    let length = (HEADER + text.len()).next_multiple_of(4);
+    let offset = store.offset + index * SECTOR;
+    store.flash.erase(offset, offset + SECTOR)?;
+    store.flash.write_nor(offset, &record[..length])
 }
 
 /// The name a web flasher may have left for the access point.
@@ -181,7 +204,9 @@ fn custom_ap_name(flash: &mut FlashStorage<'static>) -> Option<String<32>> {
 pub fn init(flash: esp_hal::peripherals::FLASH<'static>) {
     let mut flash = FlashStorage::new(flash).multicore_auto_park();
     let offset = nvs_offset(&mut flash);
-    let stored = offset.and_then(|offset| read_record(&mut flash, offset));
+    let stored = offset.and_then(|offset| read_record(&mut flash, offset, SETTINGS_SECTOR));
+    let stored = stored.map(|text| Settings::decode(&text));
+    let stats = offset.and_then(|offset| read_record(&mut flash, offset, STATS_SECTOR));
     let ap_name = custom_ap_name(&mut flash).unwrap_or_else(|| bounded(AP_SSID));
     match (offset, &stored) {
         (None, _) => warn!("settings: no nvs partition, nothing can be saved"),
@@ -193,6 +218,7 @@ pub fn init(flash: esp_hal::peripherals::FLASH<'static>) {
         stored: stored.is_some(),
         settings: stored.unwrap_or_default(),
         ap_name,
+        stats,
     };
     STATE.lock(|cell| *cell.borrow_mut() = Some(state));
 }
@@ -223,25 +249,14 @@ pub fn ap_name() -> String<32> {
     with(|state| state.ap_name.clone())
 }
 
-/// `nvMem.saveConfig`. Core 0 is parked while the sector is rewritten.
+/// `nvMem.saveConfig`.
 pub fn save(settings: &Settings) -> bool {
     let text = settings.encode();
-    let mut record = [0xffu8; HEADER + RECORD_MAX];
-    record[0..4].copy_from_slice(&MAGIC.to_le_bytes());
-    record[4..8].copy_from_slice(&(text.len() as u32).to_le_bytes());
-    record[8..12].copy_from_slice(&checksum(text.as_bytes()).to_le_bytes());
-    record[HEADER..HEADER + text.len()].copy_from_slice(text.as_bytes());
-    // Whole words, as the flash writes them.
-    let length = (HEADER + text.len()).next_multiple_of(4);
     with(|state| {
         let Some(store) = state.store.as_mut() else {
             return false;
         };
-        let written = store
-            .flash
-            .erase(store.offset, store.offset + SECTOR)
-            .and_then(|()| store.flash.write_nor(store.offset, &record[..length]));
-        match written {
+        match write_record(store, SETTINGS_SECTOR, &text) {
             Ok(()) => {
                 info!("settings: saved");
                 state.settings = settings.clone();
@@ -256,17 +271,37 @@ pub fn save(settings: &Settings) -> bool {
     })
 }
 
-/// `nvMem.deleteConfig`.
+/// `nvMem.deleteConfig` and `resetStat`: settings and statistics both go.
 pub fn erase() -> bool {
     with(|state| {
         let Some(store) = state.store.as_mut() else {
             return false;
         };
-        let erased = store.flash.erase(store.offset, store.offset + SECTOR).is_ok();
+        let end = store.offset + SECTORS * SECTOR;
+        let erased = store.flash.erase(store.offset, end).is_ok();
         if erased {
-            info!("settings: erased");
+            info!("settings: erased, with the statistics");
             state.stored = false;
         }
         erased
+    })
+}
+
+/// The statistics record found at boot, once.
+pub fn take_stats() -> Option<String<RECORD_MAX>> {
+    with(|state| state.stats.take())
+}
+
+/// `saveStat`'s write.
+pub fn save_stats(text: &str) -> bool {
+    with(|state| {
+        let Some(store) = state.store.as_mut() else {
+            return false;
+        };
+        let written = write_record(store, STATS_SECTOR, text);
+        if let Err(error) = &written {
+            warn!("statistics: save failed: {:?}", error);
+        }
+        written.is_ok()
     })
 }

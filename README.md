@@ -8,11 +8,10 @@ and its web flasher, go to the upstream repository.
 - **What is new here** is in [`v2r/`](v2r/): a Rust firmware for the ESP32-S3,
   with its own build instructions in [`v2r/README.md`](v2r/README.md).
 - **What it does:** about 367 kH/s on a LilyGo T-Display S3, against about
-  253 kH/s for the C++ firmware on the same board. The screens, buttons and
-  setup portal work as in the original.
+  253 kH/s for the C++ firmware on the same board. The screens, buttons,
+  setup portal and statistics saved in flash work as in the original.
 - **What it does not do yet:** it is tested on the T-Display S3 only, and the
-  other boards, the firmware update page and the statistics kept in flash are
-  still to be ported.
+  other boards and the portal's firmware update page are still to be ported.
 - **The C++ firmware** below `src/` is upstream's, kept unchanged as the
   reference for the port. Everything after the line below is upstream's README
   and describes that C++ firmware, not the Rust one.
