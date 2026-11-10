@@ -9,7 +9,6 @@ use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use log::{info, warn};
 
-use crate::config;
 
 const SERVER: &str = "europe.pool.ntp.org";
 const PERIOD: Duration = Duration::from_secs(3600);
@@ -24,7 +23,7 @@ static BOOT_EPOCH: AtomicU32 = AtomicU32::new(0);
 /// as NTPClient does.
 pub fn local_now() -> u32 {
     let since_boot = Instant::now().as_secs() as u32;
-    let zone = config::timezone() * 3600;
+    let zone = crate::settings::timezone() * 3600;
     BOOT_EPOCH.load(Ordering::Relaxed).wrapping_add(since_boot).wrapping_add_signed(zone)
 }
 

@@ -16,6 +16,7 @@ xtensa-lx.workspace = true
 picominer-core.workspace = true
 
 esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
+esp-storage = { version = "0.10.0", features = ["esp32s3"] }
 esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp-radio", "esp32s3", "log-04"] }
 esp-radio = { version = "1.0.0-beta.1", features = ["esp-alloc", "esp32s3", "log-04", "unstable", "wifi"] }
 esp-radio-rtos-driver = "0.4.2"

@@ -1,3 +1,24 @@
+# NerdMiner v2R
+
+**This is a fork of [NerdMiner v2](https://github.com/BitMaker-hub/NerdMiner_v2),
+rewritten in Rust to mine faster.** It is not the official NerdMiner firmware
+and is not supported by its authors. For the official firmware, its releases
+and its web flasher, go to the upstream repository.
+
+- **What is new here** is in [`v2r/`](v2r/): a Rust firmware for the ESP32-S3,
+  with its own build instructions in [`v2r/README.md`](v2r/README.md).
+- **What it does:** about 367 kH/s on a LilyGo T-Display S3, against about
+  253 kH/s for the C++ firmware on the same board. The screens, buttons and
+  setup portal work as in the original.
+- **What it does not do yet:** it is tested on the T-Display S3 only, and the
+  other boards, the firmware update page and the statistics kept in flash are
+  still to be ported.
+- **The C++ firmware** below `src/` is upstream's, kept unchanged as the
+  reference for the port. Everything after the line below is upstream's README
+  and describes that C++ firmware, not the Rust one.
+
+---
+
 # NerdSoloMiner
 
 **The NerdSoloMiner v2**

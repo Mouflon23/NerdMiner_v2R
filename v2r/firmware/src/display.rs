@@ -45,6 +45,7 @@ static CLOCK_SCREEN: &[u8] = include_bytes!("../assets/clock.rgb565");
 static GLOBAL_HASH_SCREEN: &[u8] = include_bytes!("../assets/global_hash.rgb565");
 static PRICE_SCREEN: &[u8] = include_bytes!("../assets/price.rgb565");
 static INIT_SCREEN: &[u8] = include_bytes!("../assets/init.rgb565");
+static SETUP_SCREEN: &[u8] = include_bytes!("../assets/setup.rgb565");
 
 /// Which button, and what it did.
 type Press = (usize, Event);
@@ -454,14 +455,35 @@ fn refresh(lcd: &mut Lcd, band: &mut [u16], background: &[u8], items: Items, sho
     *shown = Some(items);
 }
 
-/// `tDisplay_LoadingScreen`, until Wi-Fi is up.
+/// `tDisplay_LoadingScreen`, until Wi-Fi is up, or `tDisplay_SetupScreen`
+/// for good once the portal opens: the board restarts when it closes.
 async fn loading(lcd: &mut Lcd, band: &mut [u16]) {
     let mut items = Items(Vec::new());
     items.add(Shape::Font2 { font: &fonts::FONT_2, datum: Datum::TopLeft }, 24, 147, TFT_BLACK, VERSION);
     compose(lcd, band, INIT_SCREEN, &items, FULL);
-    while stats::get().status == Status::Joining {
-        Timer::after_millis(200).await;
+    loop {
+        match stats::get().status {
+            Status::Joining => Timer::after_millis(200).await,
+            Status::Portal => {
+                compose(lcd, band, SETUP_SCREEN, &Items(Vec::new()), FULL);
+                loop {
+                    // The second button's long press still resets everything.
+                    if let (1, Event::LongPress) = PRESSES.receive().await {
+                        reset_configuration();
+                    }
+                }
+            }
+            _ => return,
+        }
     }
+}
+
+/// `reset_configuration`: settings and Wi-Fi forgotten, then a restart into
+/// the portal.
+fn reset_configuration() -> ! {
+    info!("erasing the configuration, restarting");
+    crate::settings::erase();
+    esp_hal::system::software_reset()
 }
 
 #[embassy_executor::task]
@@ -503,9 +525,8 @@ pub async fn run(mut lcd: Lcd) -> ! {
                     shown = None;
                     break;
                 }
-                Either::Second((1, Event::LongPress)) => {
-                    info!("reset configuration: no stored settings to erase yet");
-                }
+                // A long press on it forgets the configuration.
+                Either::Second((1, Event::LongPress)) => reset_configuration(),
                 Either::Second(_) => {}
             }
         }
