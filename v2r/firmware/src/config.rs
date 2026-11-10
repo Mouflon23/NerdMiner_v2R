@@ -6,6 +6,7 @@ pub const BTC_ADDRESS: &str = env!("V2R_BTC_ADDRESS");
 pub const POOL_HOST: &str = env!("V2R_POOL_HOST");
 pub const POOL_PORT: &str = env!("V2R_POOL_PORT");
 pub const WORKER: &str = env!("V2R_WORKER");
+const TIMEZONE: &str = env!("V2R_TIMEZONE");
 
 pub const AGENT: &str = concat!("NerdMinerV2R/", env!("CARGO_PKG_VERSION"));
 
@@ -19,4 +20,9 @@ pub const LOCAL_MIN_DIFFICULTY: f64 = 0.0001;
 
 pub fn port() -> u16 {
     POOL_PORT.parse().unwrap_or(3333)
+}
+
+/// Hours from UTC, as `Settings.Timezone` in the C++ firmware.
+pub fn timezone() -> i32 {
+    TIMEZONE.parse().unwrap_or(2)
 }

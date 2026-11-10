@@ -42,8 +42,19 @@ Measured on 9 Nov. 2026 on pool.solomining.de, with Wi-Fi at −83 dBm:
 **353 kH/s** (321 from the accelerator, 32 in software), every share accepted,
 no bad hit. NerdMiner v1.8.3 makes about 253 kH/s on the same board.
 
-Not ported yet: the screen, the setup portal, the buttons and the statistics
-kept in flash.
+The T-Display S3 screens match the C++ firmware's: the loading screen, then
+the miner, clock, global hashrate and BTC price screens, with the same
+backgrounds, fonts and places. `v2r/tools/assets.py` converts the images and
+fonts from `src/media` and TFT_eSPI, and `v2r/tools/preview.py` draws every
+screen on the PC to check them before flashing. The text is laid out the way
+OpenFontRender and TFT_eSPI do it. Only what changes is redrawn. The network
+figures come from the same APIs, over HTTPS without certificate checks, like
+the C++ firmware. The buttons work the same way: on the BOOT side, a click
+turns the screen off or on and a double click flips it; on the other side, a
+click shows the next screen.
+
+Not ported yet: the setup portal and its screen, the settings and statistics
+kept in flash, and every board but the T-Display S3.
 
 ## `bench`: the SHA-256 kernels
 

@@ -8,7 +8,7 @@ use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpAddress, Stack};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use esp_radio::wifi::WifiController;
-use heapless::String;
+use heapless::{String, Vec};
 use log::{info, warn};
 use picominer_core::stratum::{self, Job, LineBuffer, Message, Session};
 use picominer_core::target::meets_target;
@@ -16,7 +16,7 @@ use static_cell::ConstStaticCell;
 
 use crate::config;
 use crate::miner;
-use crate::stats;
+use crate::stats::{self, Status};
 
 const ID_SUBSCRIBE: u32 = 1;
 const ID_AUTHORIZE: u32 = 2;
@@ -36,6 +36,15 @@ static LINES: ConstStaticCell<LineBuffer<4096>> = ConstStaticCell::new(LineBuffe
 
 type Request = String<320>;
 
+/// A share sent and not answered yet: its id, difficulty and whether it met
+/// the block target. The pool's answer decides what the screen counts.
+#[derive(Clone, Copy)]
+struct Pending {
+    id: u32,
+    difficulty: f64,
+    block: bool,
+}
+
 async fn send(socket: &mut TcpSocket<'_>, request: &Request) -> Result<(), &'static str> {
     let mut rest = request.as_bytes();
     while !rest.is_empty() {
@@ -46,6 +55,7 @@ async fn send(socket: &mut TcpSocket<'_>, request: &Request) -> Result<(), &'sta
 }
 
 async fn join(controller: &mut WifiController<'static>) {
+    stats::update(|stats| stats.status = Status::Joining);
     loop {
         match with_timeout(JOIN_TIMEOUT, controller.connect_async()).await {
             Ok(Ok(_)) => {
@@ -106,6 +116,7 @@ async fn session(
     let mut job: Option<(u32, Job)> = None;
     let mut difficulty = 1.0;
     let mut next_id = ID_FIRST_SUBMIT;
+    let mut pending: Vec<Pending, 16> = Vec::new();
     let mut last_send = Instant::now();
     let mut last_job = Instant::now();
     let mut last_rssi = Instant::from_ticks(0);
@@ -140,6 +151,8 @@ async fn session(
                                     built.version_count,
                                 );
                                 job = Some((generation, built));
+                                stats::update(|stats| stats.templates += 1);
+                                stats::update(|stats| stats.status = Status::Mining);
                             }
                             Err(error) => warn!("bad job: {:?}", error),
                         }
@@ -187,6 +200,18 @@ async fn session(
                 }
                 Ok(Message::Reply { id, result, error }) if id >= ID_FIRST_SUBMIT => {
                     let accepted = error.is_none() && result.as_bool() != Some(false);
+                    let share = pending.iter().position(|share| share.id == id).map(|at| pending.swap_remove(at));
+                    if let (true, Some(share)) = (accepted, share) {
+                        stats::update(|stats| {
+                            stats.best = stats.best.max(share.difficulty);
+                            if share.difficulty >= 1.0 {
+                                stats.shares32 += 1;
+                            }
+                            if share.block {
+                                stats.blocks += 1;
+                            }
+                        });
+                    }
                     if accepted {
                         info!("share {} accepted", id);
                     } else {
@@ -211,10 +236,14 @@ async fn session(
             if found.generation != *generation || found.difficulty < difficulty {
                 continue;
             }
-            if meets_target(&found.hash, &current.target) {
+            let block = meets_target(&found.hash, &current.target);
+            if block {
                 warn!("BLOCK FOUND: nonce {:08x}", found.nonce);
-                stats::update(|stats| stats.blocks += 1);
             }
+            if pending.is_full() {
+                pending.remove(0);
+            }
+            let _ = pending.push(Pending { id: next_id, difficulty: found.difficulty, block });
             info!("submitting diff {:.6}, version {}, as {}", found.difficulty, found.version, next_id);
             request.clear();
             stratum::write_submit(&mut request, next_id, &user, current, found.nonce, found.version)
@@ -251,6 +280,7 @@ pub async fn run(stack: Stack<'static>, mut controller: WifiController<'static>)
         if !controller.is_connected() {
             join(&mut controller).await;
         }
+        stats::update(|stats| stats.status = Status::Dhcp);
         if with_timeout(DHCP_TIMEOUT, stack.wait_config_up()).await.is_err() {
             warn!("no DHCP lease");
             let _ = with_timeout(JOIN_TIMEOUT, controller.disconnect_async()).await;
@@ -258,7 +288,10 @@ pub async fn run(stack: Stack<'static>, mut controller: WifiController<'static>)
         }
         if let Some(config) = stack.config_v4() {
             info!("address {}", config.address);
+            let octets = config.address.address().octets();
+            stats::update(|stats| stats.ip = octets);
         }
+        stats::update(|stats| stats.status = Status::Connecting);
 
         let started = Instant::now();
         if let Err(reason) = session(stack, &mut controller, rx, tx, lines).await {
@@ -271,6 +304,7 @@ pub async fn run(stack: Stack<'static>, mut controller: WifiController<'static>)
             stats::update(|stats| stats.drops += 1);
         }
         miner::stop();
+        stats::update(|stats| stats.status = Status::PoolError);
         Timer::after_secs(3).await;
     }
 }

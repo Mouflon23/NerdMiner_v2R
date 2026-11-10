@@ -4,13 +4,15 @@
 use std::{env, fs};
 
 /// Each setting with its default.
-const SETTINGS: [(&str, &str); 6] = [
+const SETTINGS: [(&str, &str); 7] = [
     ("WIFI_SSID", ""),
     ("WIFI_PASSWORD", ""),
     ("BTC_ADDRESS", ""),
     ("POOL_HOST", "pool.solomining.de"),
     ("POOL_PORT", "3333"),
     ("WORKER", "nerdminer-v2r"),
+    // Hours from UTC; the C++ firmware defaults to 2.
+    ("TIMEZONE", "2"),
 ];
 
 fn lookup<'a>(file: &'a str, key: &str) -> Option<&'a str> {
